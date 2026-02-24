@@ -1,10 +1,80 @@
+/* ---------------------------------------------------------------------------
+   1. CREATE USER DATABASE (Run in master ONLY if DB not created yet)
+--------------------------------------------------------------------------- */
+-- Run this ONLY once in master:
+-- CREATE DATABASE FinEdgeLakeDB;
+-- GO
+
+
+/* ---------------------------------------------------------------------------
+   2. SWITCH TO USER DATABASE
+--------------------------------------------------------------------------- */
 USE FinEdgeLakeDB;
 GO
 
+
+/* ---------------------------------------------------------------------------
+   3. CREATE MASTER KEY (Required for Credential)
+--------------------------------------------------------------------------- */
+-- Run this ONCE. If it already exists, do not run again.
+-- Choose a strong password and keep it safe.
+
+CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'StrongP@ssword#2026!';
+GO
+
+
+/* ---------------------------------------------------------------------------
+   4. CREATE DATABASE-SCOPED CREDENTIAL (Managed Identity)
+--------------------------------------------------------------------------- */
+-- If you previously created it and need to rebuild, uncomment the DROP line:
+-- DROP DATABASE SCOPED CREDENTIAL FinEdgeMI;
+-- GO
+
+CREATE DATABASE SCOPED CREDENTIAL FinEdgeMI
+WITH IDENTITY = 'Managed Identity';
+GO
+
+
+/* ---------------------------------------------------------------------------
+   5. CREATE PARQUET FILE FORMAT
+--------------------------------------------------------------------------- */
+-- If exists, drop & recreate to avoid errors
+IF EXISTS (SELECT * FROM sys.external_file_formats WHERE name = 'ParquetFormat')
+    DROP EXTERNAL FILE FORMAT ParquetFormat;
+GO
+
+CREATE EXTERNAL FILE FORMAT ParquetFormat
+WITH (FORMAT_TYPE = PARQUET);
+GO
+
+
+/* ---------------------------------------------------------------------------
+   6. CREATE EXTERNAL DATA SOURCE (ADLS Gen2 with Managed Identity)
+--------------------------------------------------------------------------- */
+-- If exists, drop & recreate
+IF EXISTS (SELECT * FROM sys.external_data_sources WHERE name = 'FinEdgeLake')
+    DROP EXTERNAL DATA SOURCE FinEdgeLake;
+GO
+
+CREATE EXTERNAL DATA SOURCE FinEdgeLake
+WITH (
+    LOCATION = 'abfss://datalake@stgfinedgedatalake.dfs.core.windows.net/',
+    CREDENTIAL = FinEdgeMI
+);
+GO
+
+
+/* ---------------------------------------------------------------------------
+   7. CREATE GOLD EXTERNAL TABLES (Schema-only, Serverless-compatible)
+--------------------------------------------------------------------------- */
+
+-----------------------------
+-- gold_customer_risk
+-----------------------------
 DROP EXTERNAL TABLE IF EXISTS gold_customer_risk;
 GO
 
-CREATE EXTERNAL TABLE gold_customer_risk  
+CREATE EXTERNAL TABLE gold_customer_risk
 (
     customer_id        BIGINT,
     txn_year           INT,
@@ -18,32 +88,27 @@ CREATE EXTERNAL TABLE gold_customer_risk
     avg_total_balance  FLOAT
 )
 WITH (
-    LOCATION = 'gold/customer_risk/', 
+    LOCATION = 'gold/customer_risk/',
     DATA_SOURCE = FinEdgeLake,
     FILE_FORMAT = ParquetFormat
 );
 GO
 
 
-###################
-
-SELECT TOP 100 *
-FROM gold_customer_risk;
-
-
-#####################
-
+-----------------------------
+-- gold_product_performance
+-----------------------------
 DROP EXTERNAL TABLE IF EXISTS gold_product_performance;
 GO
 
 CREATE EXTERNAL TABLE gold_product_performance
 (
-    txn_year              INT,
-    txn_month             INT,
-    account_type          NVARCHAR(100),
-    total_inflow          FLOAT,
-    total_outflow         FLOAT,
-    profitability_proxy   FLOAT
+    txn_year            INT,
+    txn_month           INT,
+    account_type        NVARCHAR(100),
+    total_inflow        FLOAT,
+    total_outflow       FLOAT,
+    profitability_proxy FLOAT
 )
 WITH (
     LOCATION = 'gold/product_performance/',
@@ -53,10 +118,9 @@ WITH (
 GO
 
 
-
-#################
-
-
+-----------------------------
+-- gold_fraud_summary
+-----------------------------
 DROP EXTERNAL TABLE IF EXISTS gold_fraud_summary;
 GO
 
@@ -74,8 +138,10 @@ WITH (
 );
 GO
 
-#############
 
+-----------------------------
+-- gold_monthly_active
+-----------------------------
 DROP EXTERNAL TABLE IF EXISTS gold_monthly_active;
 GO
 
@@ -93,8 +159,9 @@ WITH (
 GO
 
 
-################
-
+-----------------------------
+-- gold_top100_risky
+-----------------------------
 DROP EXTERNAL TABLE IF EXISTS gold_top100_risky;
 GO
 
@@ -114,4 +181,16 @@ WITH (
     DATA_SOURCE = FinEdgeLake,
     FILE_FORMAT = ParquetFormat
 );
+GO
+
+
+/* ---------------------------------------------------------------------------
+   8. VALIDATE: Run sample selects
+--------------------------------------------------------------------------- */
+
+SELECT TOP 10 * FROM gold_customer_risk;
+SELECT TOP 10 * FROM gold_product_performance;
+SELECT TOP 10 * FROM gold_fraud_summary;
+SELECT TOP 10 * FROM gold_monthly_active;
+SELECT TOP 10 * FROM gold_top100_risky;
 GO
