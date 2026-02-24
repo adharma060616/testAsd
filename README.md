@@ -83,6 +83,17 @@ display(txns_bz.limit(5))
 
     ###############################
 
+    # Customers & Accounts (no partitions; small dimension-ish)
+customers_bz.write.mode("overwrite").parquet(f"{lake}/bronze_parquet/customers")
+accounts_bz.write.mode("overwrite").parquet(f"{lake}/bronze_parquet/accounts")
+
+# Transactions partitioned by year/month to match their date range (Nov 2025 → Feb 2026)
+txns_bz.write.mode("overwrite") \
+    .partitionBy("txn_year","txn_month") \
+    .parquet(f"{lake}/bronze_parquet/transactions")
+
+    ###########################################
+
     from pyspark.sql.functions import when, sum as Fsum, count as Fcount, avg as Favg, \
                                    countDistinct, upper, lit, col
 
