@@ -1,0 +1,88 @@
+-- In your user database (not master)
+CREATE DATABASE IF NOT EXISTS FinEdgeLakeDB;
+GO
+USE FinEdgeLakeDB;
+GO
+
+-- Credential via Managed Identity (no secret needed)
+CREATE DATABASE SCOPED CREDENTIAL FinEdgeMI
+WITH IDENTITY = 'Managed Identity';
+GO
+
+-- External Data Source (ADLS Gen2)
+IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name='FinEdgeLake')
+BEGIN
+  CREATE EXTERNAL DATA SOURCE FinEdgeLake
+  WITH ( LOCATION = 'abfss://datalake@stgfinedgedatalake.dfs.core.windows.net/',
+         CREDENTIAL = FinEdgeMI );
+END
+GO
+
+-- Parquet format
+IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name='ParquetFormat')
+BEGIN
+  CREATE EXTERNAL FILE FORMAT ParquetFormat WITH (FORMAT_TYPE = PARQUET);
+END
+GO
+
+
+##############################
+
+-- Customer Risk
+CREATE OR ALTER EXTERNAL TABLE gold_customer_risk
+WITH (
+  DATA_SOURCE = FinEdgeLake,
+  LOCATION = 'gold/customer_risk/',
+  FILE_FORMAT = ParquetFormat
+)
+AS SELECT * FROM OPENROWSET(
+  BULK 'gold/customer_risk/*',
+  DATA_SOURCE = 'FinEdgeLake',
+  FORMAT = 'PARQUET'
+) AS rows;
+GO
+
+-- Product Performance
+CREATE OR ALTER EXTERNAL TABLE gold_product_performance
+WITH (DATA_SOURCE = FinEdgeLake, LOCATION = 'gold/product_performance/', FILE_FORMAT = ParquetFormat)
+AS SELECT * FROM OPENROWSET(
+  BULK 'gold/product_performance/*',
+  DATA_SOURCE='FinEdgeLake',
+  FORMAT='PARQUET'
+) AS rows;
+GO
+
+-- Fraud Summary
+CREATE OR ALTER EXTERNAL TABLE gold_fraud_summary
+WITH (DATA_SOURCE = FinEdgeLake, LOCATION = 'gold/fraud_summary/', FILE_FORMAT = ParquetFormat)
+AS SELECT * FROM OPENROWSET(
+  BULK 'gold/fraud_summary/*',
+  DATA_SOURCE='FinEdgeLake',
+  FORMAT='PARQUET'
+) AS rows;
+GO
+
+-- Monthly Active Customers
+CREATE OR ALTER EXTERNAL TABLE gold_monthly_active
+WITH (DATA_SOURCE = FinEdgeLake, LOCATION = 'gold/monthly_active/', FILE_FORMAT = ParquetFormat)
+AS SELECT * FROM OPENROWSET(
+  BULK 'gold/monthly_active/*',
+  DATA_SOURCE='FinEdgeLake',
+  FORMAT='PARQUET'
+) AS rows;
+GO
+
+-- Top-100 Risky
+CREATE OR ALTER EXTERNAL TABLE gold_top100_risky
+WITH (DATA_SOURCE = FinEdgeLake, LOCATION = 'gold/top100_risky/', FILE_FORMAT = ParquetFormat)
+AS SELECT * FROM OPENROWSET(
+  BULK 'gold/top100_risky/*',
+  DATA_SOURCE='FinEdgeLake',
+  FORMAT='PARQUET'
+) AS rows;
+GO
+
+
+########################
+
+
