@@ -244,18 +244,25 @@ fraud_summary.write.mode("overwrite").partitionBy("txn_year","txn_month").parque
 
 ################################
 
+from pyspark.sql.functions import row_number
 from pyspark.sql.window import Window
 
-w = Window.partitionBy("txn_year","txn_month").orderBy(col("avg_risk_score").desc(),
-                                                       col("high_value_txn_cnt").desc(),
-                                                       col("debit_outflow").desc())
+w = Window.partitionBy("txn_year", "txn_month") \
+          .orderBy(
+              F.col("avg_risk_score").desc(),
+              F.col("high_value_txn_cnt").desc(),
+              F.col("debit_outflow").desc()
+          )
 
-top100_risky = (customer_risk
-    .withColumn("risk_rank", Frow_number().over(w))
-    .filter(col("risk_rank") <= 100)
+top100_risky = (
+    customer_risk
+        .withColumn("risk_rank", row_number().over(w))
+        .filter(F.col("risk_rank") <= 100)
 )
 
-top100_risky.write.mode("overwrite").partitionBy("txn_year","txn_month").parquet(f"{gold_root}/top100_risky")
+top100_risky.write.mode("overwrite") \
+    .partitionBy("txn_year", "txn_month") \
+    .parquet(f"{gold_root}/top100_risky")
 
 
 ######################
