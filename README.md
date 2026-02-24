@@ -179,6 +179,21 @@ monthly_active.write.mode("overwrite").parquet(f"{gold_root}/monthly_active")
 
 ##################
 
+customer_risk = (silver_customer_monthly
+    .groupBy("txn_year","txn_month","customer_id","city","credit_score")
+    .agg(
+        Fsum("debit_outflow").alias("debit_outflow"),
+        Fsum("credit_inflow").alias("credit_inflow"),
+        Favg("risk_score").alias("avg_risk_score"),
+        Fsum("high_value_txn_cnt").alias("high_value_txn_cnt"),
+        Favg("total_balance").alias("avg_total_balance")
+    )
+)
+
+customer_risk.write.mode("overwrite").partitionBy("txn_year","txn_month").parquet(f"{gold_root}/customer_risk")
+
+###########################################
+
 
 # Map each txn to account_type via customer_id
 from pyspark.sql.functions import first
