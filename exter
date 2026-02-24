@@ -1,30 +1,36 @@
--- In your user database (not master)
-CREATE DATABASE IF NOT EXISTS FinEdgeLakeDB;
+-- Create Database (manual only)
+CREATE DATABASE FinEdgeLakeDB;
 GO
+
 USE FinEdgeLakeDB;
 GO
 
--- Credential via Managed Identity (no secret needed)
+-- Credential
+DROP DATABASE SCOPED CREDENTIAL FinEdgeMI;
+GO
+
 CREATE DATABASE SCOPED CREDENTIAL FinEdgeMI
 WITH IDENTITY = 'Managed Identity';
 GO
 
--- External Data Source (ADLS Gen2)
-IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name='FinEdgeLake')
-BEGIN
-  CREATE EXTERNAL DATA SOURCE FinEdgeLake
-  WITH ( LOCATION = 'abfss://datalake@stgfinedgedatalake.dfs.core.windows.net/',
-         CREDENTIAL = FinEdgeMI );
-END
+-- External Data Source
+DROP EXTERNAL DATA SOURCE FinEdgeLake;
 GO
 
--- Parquet format
-IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name='ParquetFormat')
-BEGIN
-  CREATE EXTERNAL FILE FORMAT ParquetFormat WITH (FORMAT_TYPE = PARQUET);
-END
+CREATE EXTERNAL DATA SOURCE FinEdgeLake
+WITH (
+    LOCATION = 'abfss://datalake@stgfinedgedatalake.dfs.core.windows.net/',
+    CREDENTIAL = FinEdgeMI
+);
 GO
 
+-- Parquet Format
+DROP EXTERNAL FILE FORMAT ParquetFormat;
+GO
+
+CREATE EXTERNAL FILE FORMAT ParquetFormat
+WITH (FORMAT_TYPE = PARQUET);
+GO
 
 ##############################
 
