@@ -1,0 +1,117 @@
+USE FinEdgeLakeDB;
+GO
+
+DROP EXTERNAL TABLE IF EXISTS gold_customer_risk;
+GO
+
+CREATE EXTERNAL TABLE gold_customer_risk  
+(
+    customer_id        BIGINT,
+    txn_year           INT,
+    txn_month          INT,
+    city               NVARCHAR(200),
+    credit_score       INT,
+    debit_outflow      FLOAT,
+    credit_inflow      FLOAT,
+    avg_risk_score     FLOAT,
+    high_value_txn_cnt INT,
+    avg_total_balance  FLOAT
+)
+WITH (
+    LOCATION = 'gold/customer_risk/', 
+    DATA_SOURCE = FinEdgeLake,
+    FILE_FORMAT = ParquetFormat
+);
+GO
+
+
+###################
+
+SELECT TOP 100 *
+FROM gold_customer_risk;
+
+
+#####################
+
+DROP EXTERNAL TABLE IF EXISTS gold_product_performance;
+GO
+
+CREATE EXTERNAL TABLE gold_product_performance
+(
+    txn_year              INT,
+    txn_month             INT,
+    account_type          NVARCHAR(100),
+    total_inflow          FLOAT,
+    total_outflow         FLOAT,
+    profitability_proxy   FLOAT
+)
+WITH (
+    LOCATION = 'gold/product_performance/',
+    DATA_SOURCE = FinEdgeLake,
+    FILE_FORMAT = ParquetFormat
+);
+GO
+
+
+
+#################
+
+
+DROP EXTERNAL TABLE IF EXISTS gold_fraud_summary;
+GO
+
+CREATE EXTERNAL TABLE gold_fraud_summary
+(
+    txn_year              INT,
+    txn_month             INT,
+    customer_id           BIGINT,
+    suspicious_window_cnt INT
+)
+WITH (
+    LOCATION = 'gold/fraud_summary/',
+    DATA_SOURCE = FinEdgeLake,
+    FILE_FORMAT = ParquetFormat
+);
+GO
+
+#############
+
+DROP EXTERNAL TABLE IF EXISTS gold_monthly_active;
+GO
+
+CREATE EXTERNAL TABLE gold_monthly_active
+(
+    txn_year                 INT,
+    txn_month                INT,
+    monthly_active_customers BIGINT
+)
+WITH (
+    LOCATION = 'gold/monthly_active/',
+    DATA_SOURCE = FinEdgeLake,
+    FILE_FORMAT = ParquetFormat
+);
+GO
+
+
+################
+
+DROP EXTERNAL TABLE IF EXISTS gold_top100_risky;
+GO
+
+CREATE EXTERNAL TABLE gold_top100_risky
+(
+    txn_year           INT,
+    txn_month          INT,
+    customer_id        BIGINT,
+    risk_rank          INT,
+    avg_risk_score     FLOAT,
+    high_value_txn_cnt INT,
+    debit_outflow      FLOAT,
+    credit_inflow      FLOAT
+)
+WITH (
+    LOCATION = 'gold/top100_risky/',
+    DATA_SOURCE = FinEdgeLake,
+    FILE_FORMAT = ParquetFormat
+);
+GO
