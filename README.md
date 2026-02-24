@@ -13,9 +13,9 @@ gold_root   = f"{lake}/gold"
 #################
 
 from pyspark.sql.types import *
-from pyspark.sql.functions import col, trim, to_date, year, month
+from pyspark.sql.functions import col, trim, year, month
 
-# Schemas derived from your files
+# ---------- Schemas ----------
 customers_schema = StructType([
     StructField("customer_id", IntegerType(), False),
     StructField("age", IntegerType(), True),
@@ -35,41 +35,51 @@ txns_schema = StructType([
     StructField("txn_id", IntegerType(), False),
     StructField("customer_id", IntegerType(), False),
     StructField("amount", IntegerType(), True),
-    StructField("txn_type", StringType(), True),   # 'Debit' or 'Credit'
-    StructField("txn_date", TimestampType(), True) # 2025-11..2026-02
+    StructField("txn_type", StringType(), True),
+    StructField("txn_date", TimestampType(), True)
 ])
 
-customers_bz = (spark.read
-    .option("header", True)
-    .schema(customers_schema)
-    .csv(bronze_customers))
+# ---------- Paths ----------
+account = "stgfinedgedatalake"
+container = "datalake"
+lake = f"abfss://{container}@{account}.dfs.core.windows.net"
 
-accounts_bz = (spark.read
-    .option("header", True)
-    .schema(accounts_schema)
-    .csv(bronze_accounts))
+bronze_customers = f"{lake}/bronze/customers"
+bronze_accounts  = f"{lake}/bronze/accounts"
+bronze_txns      = f"{lake}/bronze/transactions"
 
-txns_bz = (spark.read
-    .option("header", True)
-    .schema(txns_schema)
-    .csv(bronze_txns))
+# ---------- Read CSVs ----------
+customers_bz = (
+    spark.read
+        .option("header", True)
+        .schema(customers_schema)
+        .csv(bronze_customers)
+)
 
-# Add normalized columns useful for partitioning
-txns_bz = txns_bz.withColumn("txn_year", year(col("txn_date"))) \
-                 .withColumn("txn_month", month(col("txn_date")))
-``
+accounts_bz = (
+    spark.read
+        .option("header", True)
+        .schema(accounts_schema)
+        .csv(bronze_accounts)
+)
 
+txns_bz = (
+    spark.read
+        .option("header", True)
+        .schema(txns_schema)
+        .csv(bronze_txns)
+)
 
-#############
+# Add year/month for partitioning
+txns_bz = (
+    txns_bz
+        .withColumn("txn_year", year(col("txn_date")))
+        .withColumn("txn_month", month(col("txn_date")))
+)
 
-# Customers & Accounts (no partitions; small dimension-ish)
-customers_bz.write.mode("overwrite").parquet(f"{lake}/bronze_parquet/customers")
-accounts_bz.write.mode("overwrite").parquet(f"{lake}/bronze_parquet/accounts")
-
-# Transactions partitioned by year/month to match their date range (Nov 2025 → Feb 2026)
-txns_bz.write.mode("overwrite") \
-    .partitionBy("txn_year","txn_month") \
-    .parquet(f"{lake}/bronze_parquet/transactions")
+display(customers_bz.limit(5))
+display(accounts_bz.limit(5))
+display(txns_bz.limit(5))
 
     ###############################
 
