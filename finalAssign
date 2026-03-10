@@ -1,50 +1,65 @@
-from pyspark.sql import functions as F
+Cell In[11], line 67
+     62 DimAccount.write.mode('overwrite').parquet(f"{GOLD}/dim_account/")
+     64 # ===== FactRetailTransactions
+     65 FactRetail = (trx
+     66     .join(DimCustomer.select('customer_key','dim_customer_sk'), 'customer_key','left')
+---> 67     .join(DimBranch.select('branch_id','dim_branch_sk'), on=trx['customer_key']==customers['customer_key'], how='left')
+     68 )
+     69 # Simplify joins by recomputing branch via customers
+     70 fact_retail = (trx.alias('t')
+     71     .join(customers.select('customer_key','branch_id'),'customer_key','left')
+     72     .join(DimBranch,'branch_id','left')
+   (...)
+     89     )
+     90 )
 
-def mark_processed(batch_id: str, table_name: str, row_count: int):
-    (spark.createDataFrame([(batch_id, table_name, int(row_count))],
-                           "batch_id string, table_name string, row_count long")
-          .withColumn("processed_at", F.current_timestamp())
-          .write.mode("append")
-          .parquet(CONTROL_PATH))
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
+   2491         on = self._jseq([])
+   2492     assert isinstance(how, str), "how should be a string"
+-> 2493     jdf = self._jdf.join(other._jdf, on, how)
+   2494 return DataFrame(jdf, self.sparkSession)
 
-def ingest_table(table: str, fmt: str, schema, src_path: str):
-    if already_processed(BATCH_ID):
-        print(f"Batch {BATCH_ID} already processed. Skipping.")
-        return
+File ~/cluster-env/env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-    reader = spark.read.format(fmt)
-    if fmt == "csv":
-        reader = reader.option("header", True)
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:179, in capture_sql_exception.<locals>.deco(*a, **kw)
+    177 def deco(*a: Any, **kw: Any) -> Any:
+    178     try:
+--> 179         return f(*a, **kw)
+    180     except Py4JJavaError as e:
+    181         converted = convert_exception(e.java_exception)
 
-    df = (reader.schema(schema).load(src_path)
-          .withColumn("ingestion_timestamp", F.current_timestamp())
-          .withColumn("source_file_path", F.input_file_name())
-          .withColumn("batch_id", F.lit(BATCH_ID))
-          .withColumn("source_system", F.lit(SOURCE_SYSTEM)))
+File ~/cluster-env/env/lib/python3.11/site-packages/py4j/protocol.py:326, in get_return_value(answer, gateway_client, target_id, name)
+    324 value = OUTPUT_CONVERTER[type](answer[2:], gateway_client)
+    325 if answer[1] == REFERENCE_TYPE:
+--> 326     raise Py4JJavaError(
+    327         "An error occurred while calling {0}{1}{2}.\n".
+    328         format(target_id, ".", name), value)
+    329 else:
+    330     raise Py4JError(
+    331         "An error occurred while calling {0}{1}{2}. Trace:\n{3}\n".
+    332         format(target_id, ".", name, value))
 
-    # Simple validity rules per table
-    if table == "customers":
-        valid = df.filter(F.col("customer_key").isNotNull())
-        invalid = df.exceptAll(valid)
-    elif table == "transactions":
-        valid = df.filter(F.col("txn_id").isNotNull() & F.col("txn_timestamp").isNotNull())
-        invalid = df.exceptAll(valid)
-    else:
-        valid = df
-        invalid = spark.createDataFrame([], df.schema)
-
-    # ACTION 1: count once
-    valid_cnt = valid.count()
-
-    # ACTION 2: write valid
-    (valid.write.mode("append")
-          .parquet(f"{BRONZE}/{table}/"))
-
-    # ACTION 3: write invalid (if any)
-    if invalid.count() > 0:
-        (invalid.withColumn("rejection_reason", F.lit("Schema/Rule violation"))
-               .write.mode("append")
-               .parquet(f"{QUAR}/{table}/"))
-
-    # ACTION 4: log control (uses withColumn current_timestamp())
-    mark_processed(BATCH_ID, table, valid_cnt)
+Py4JJavaError: An error occurred while calling o4665.join.
+: java.lang.ClassCastException: class org.apache.spark.sql.catalyst.plans.logical.Project cannot be cast to class org.apache.spark.sql.catalyst.plans.logical.Join (org.apache.spark.sql.catalyst.plans.logical.Project and org.apache.spark.sql.catalyst.plans.logical.Join are in unnamed module of loader 'app')
+	at org.apache.spark.sql.Dataset.resolveSelfJoinCondition(Dataset.scala:1146)
+	at org.apache.spark.sql.Dataset.join(Dataset.scala:1194)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.GatewayConnection.run(GatewayConnection.java:238)
+	at java.base/java.lang.Thread.run(Thread.java:840)
