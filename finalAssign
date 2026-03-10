@@ -1,102 +1,294 @@
-Loading Silver Layer input tables...
-Building DimDate...
-✔ DimDate written to GOLD
-Building DimBranch...
-✔ DimBranch written to GOLD
-Building DimInstrument...
-✔ DimInstrument written to GOLD
-Building DimProduct...
-✔ DimProduct written to GOLD
-Building DimCustomer (SCD‑2)...
-✔ DimCustomer written to GOLD
-Building DimAccount...
-✔ DimAccount written to GOLD
-Building FactRetailTransactions...
----------------------------------------------------------------------------
-AnalysisException                         Traceback (most recent call last)
-Cell In[13], line 165
-    158 # STEP 3 — join customer_key → DimCustomer
-    159 trx_final = trx_w_dimbranch.join(
-    160     DimCustomer.select("customer_key", "dim_customer_sk"), 
-    161     "customer_key",
-    162     "left"
-    163 ).withColumn("dim_date_sk", col("txn_date"))
---> 165 FactRetail = trx_final.select(
-    166     "customer_key",
-    167     "dim_customer_sk",
-    168     "dim_branch_sk",
-    169     col("t.account_ref").alias("account_ref"),
-    170     col("t.txn_id").alias("txn_id"),
-    171     col("t.amount").alias("amount"),
-    172     col("t.amount_usd").alias("amount_usd"),
-    173     col("t.channel").alias("channel"),
-    174     col("t.status").alias("status"),
-    175     col("t.txn_type").alias("txn_type"),
-    176     col("t.processing_time_sec").alias("processing_time_sec"),
-    177     col("t.sla_breached").alias("sla_breached"),
-    178     col("t.error_flag").alias("error_flag"),
-    179     col("t.rejection_reason").alias("rejection_reason"),
-    180     col("t.txn_timestamp").alias("txn_timestamp"),
-    181     "dim_date_sk"
-    182 )
-    184 FactRetail.write.mode("overwrite").parquet(f"{GOLD}/fact_retail_transactions/")
-    185 print("✔ FactRetailTransactions written to GOLD")
+# =====================================================================
+# GOLD LAYER – STAR SCHEMA BUILDER
+# Author: Your Name
+# =====================================================================
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
-   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
-   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
-   3186 
-   3187     .. versionadded:: 1.3.0
-   (...)
-   3227     +-----+---+
-   3228     """
--> 3229     jdf = self._jdf.select(self._jcols(*cols))
-   3230     return DataFrame(jdf, self.sparkSession)
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.window import Window
 
-File ~/cluster-env/env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# ---------------- CONFIG ----------------
+ADLS_ACCOUNT = "stcapstone"      # <-- CHANGE THIS TO YOUR STORAGE ACCOUNT
+SILVER = f"abfss://silver@{ADLS_ACCOUNT}.dfs.core.windows.net"
+GOLD   = f"abfss://gold@{ADLS_ACCOUNT}.dfs.core.windows.net"
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
+spark = SparkSession.builder.getOrCreate()
 
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `t`.`sla_breached` cannot be resolved. Did you mean one of the following? [`t`.`fx_rate`, `branch_id`, `t`.`currency`, `dim_branch_sk`, `t`.`usd_rate`].;
-'Project [customer_key#1506L, dim_customer_sk#1762L, dim_branch_sk#1639L, account_ref#1507 AS account_ref#2027, txn_id#1505 AS txn_id#2028, amount#1508 AS amount#2029, amount_usd#1522 AS amount_usd#2030, channel#1524 AS channel#2031, status#1513 AS status#2032, txn_type#1511 AS txn_type#2033, processing_time_sec#1514 AS processing_time_sec#2034, 't.sla_breached AS sla_breached#2035, 't.error_flag AS error_flag#2036, 't.rejection_reason AS rejection_reason#2037, txn_timestamp#1517 AS txn_timestamp#2038, dim_date_sk#1997]
-+- Project [customer_key#1506L, branch_id#1438, currency#1504, txn_id#1505, account_ref#1507, amount#1508, original_amount#1509, fx_rate#1510, txn_type#1511, category#1512, status#1513, processing_time_sec#1514, source_system#1515, record_hash#1516, txn_timestamp#1517, processed_timestamp#1518, ingestion_timestamp#1519, source_file_path#1520, usd_rate#1521, amount_usd#1522, txn_date#1523, channel#1524, dim_branch_sk#1639L, branch_name#1899, ... 5 more fields]
-   +- Project [customer_key#1506L, branch_id#1438, currency#1504, txn_id#1505, account_ref#1507, amount#1508, original_amount#1509, fx_rate#1510, txn_type#1511, category#1512, status#1513, processing_time_sec#1514, source_system#1515, record_hash#1516, txn_timestamp#1517, processed_timestamp#1518, ingestion_timestamp#1519, source_file_path#1520, usd_rate#1521, amount_usd#1522, txn_date#1523, channel#1524, dim_branch_sk#1639L, branch_name#1899, ... 4 more fields]
-      +- Join LeftOuter, (customer_key#1506L = customer_key#1946L)
-         :- Project [branch_id#1438, customer_key#1506L, currency#1504, txn_id#1505, account_ref#1507, amount#1508, original_amount#1509, fx_rate#1510, txn_type#1511, category#1512, status#1513, processing_time_sec#1514, source_system#1515, record_hash#1516, txn_timestamp#1517, processed_timestamp#1518, ingestion_timestamp#1519, source_file_path#1520, usd_rate#1521, amount_usd#1522, txn_date#1523, channel#1524, dim_branch_sk#1639L, branch_name#1899, ... 3 more fields]
-         :  +- Join LeftOuter, (branch_id#1438 = branch_id#1898)
-         :     :- Project [customer_key#1506L, currency#1504, txn_id#1505, account_ref#1507, amount#1508, original_amount#1509, fx_rate#1510, txn_type#1511, category#1512, status#1513, processing_time_sec#1514, source_system#1515, record_hash#1516, txn_timestamp#1517, processed_timestamp#1518, ingestion_timestamp#1519, source_file_path#1520, usd_rate#1521, amount_usd#1522, txn_date#1523, channel#1524, branch_id#1438]
-         :     :  +- Join LeftOuter, (customer_key#1506L = customer_key#1433L)
-         :     :     :- SubqueryAlias t
-         :     :     :  +- Relation [currency#1504,txn_id#1505,customer_key#1506L,account_ref#1507,amount#1508,original_amount#1509,fx_rate#1510,txn_type#1511,category#1512,status#1513,processing_time_sec#1514,source_system#1515,record_hash#1516,txn_timestamp#1517,processed_timestamp#1518,ingestion_timestamp#1519,source_file_path#1520,usd_rate#1521,amount_usd#1522,txn_date#1523,channel#1524] parquet
-         :     :     +- Project [customer_key#1433L, branch_id#1438]
-         :     :        +- Relation [customer_id#1432,customer_key#1433L,customer_name#1434,email#1435,phone#1436,segment#1437,branch_id#1438,branch_name#1439,region#1440,country#1441,city#1442,risk_score#1443,risk_category#1444,risk_profile#1445,onboard_date#1446,customer_tenure_days#1447,customer_status#1448,created_at#1449,updated_at#1450,ingestion_timestamp#1451,source_file_path#1452,batch_id#1453,source_system#1454] parquet
-         :     +- Project [dim_branch_sk#1639L, branch_id#1898, branch_name#1899, city#1902, region#1900, country#1901]
-         :        +- Project [branch_id#1898, branch_name#1899, city#1902, region#1900, country#1901, monotonically_increasing_id() AS dim_branch_sk#1639L]
-         :           +- Deduplicate [city#1902, branch_id#1898, branch_name#1899, country#1901, region#1900]
-         :              +- Project [branch_id#1898, branch_name#1899, city#1902, region#1900, country#1901]
-         :                 +- Relation [customer_id#1892,customer_key#1893L,customer_name#1894,email#1895,phone#1896,segment#1897,branch_id#1898,branch_name#1899,region#1900,country#1901,city#1902,risk_score#1903,risk_category#1904,risk_profile#1905,onboard_date#1906,customer_tenure_days#1907,customer_status#1908,created_at#1909,updated_at#1910,ingestion_timestamp#1911,source_file_path#1912,batch_id#1913,source_system#1914] parquet
-         +- Project [customer_key#1946L, dim_customer_sk#1762L]
-            +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, eff_from#1684, ... 3 more fields]
-               +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, eff_from#1684, ... 2 more fields]
-                  +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, eff_from#1684, eff_to#1709]
-                     +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, eff_from#1684, ... 2 more fields]
-                        +- Window [lead(updated_at#1963, 1, null) windowspecdefinition(customer_key#1946L, updated_at#1963 ASC NULLS LAST, specifiedwindowframe(RowFrame, 1, 1)) AS eff_to#1709], [customer_key#1946L], [updated_at#1963 ASC NULLS LAST]
-                           +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, eff_from#1684]
-                              +- Project [customer_id#1945, customer_key#1946L, customer_name#1947, email#1948, phone#1949, segment#1950, branch_id#1951, branch_name#1952, region#1953, country#1954, city#1955, risk_score#1956, risk_category#1957, risk_profile#1958, onboard_date#1959, customer_tenure_days#1960, customer_status#1961, created_at#1962, updated_at#1963, ingestion_timestamp#1964, source_file_path#1965, batch_id#1966, source_system#1967, coalesce(updated_at#1963, current_timestamp()) AS eff_from#1684]
-                                 +- Relation [customer_id#1945,customer_key#1946L,customer_name#1947,email#1948,phone#1949,segment#1950,branch_id#1951,branch_name#1952,region#1953,country#1954,city#1955,risk_score#1956,risk_category#1957,risk_profile#1958,onboard_date#1959,customer_tenure_days#1960,customer_status#1961,created_at#1962,updated_at#1963,ingestion_timestamp#1964,source_file_path#1965,batch_id#1966,source_system#1967] parquet
+print("Loading Silver tables...")
+
+# ---------------- LOAD SILVER ----------------
+customers   = spark.read.parquet(f"{SILVER}/customers/")
+accounts    = spark.read.parquet(f"{SILVER}/accounts/")
+trx         = spark.read.parquet(f"{SILVER}/transactions/")
+trades      = spark.read.parquet(f"{SILVER}/trades/")
+mp          = spark.read.parquet(f"{SILVER}/market_prices/")
+
+# =====================================================================
+# 1. DIM DATE
+# =====================================================================
+print("Building DimDate...")
+
+from datetime import date, timedelta
+start = date(2018,1,1)
+end   = date(2028,12,31)
+
+calendar_rows = []
+d = start
+sk = 1
+while d <= end:
+    calendar_rows.append((
+        sk, d, d.day, d.month,
+        (d.month-1)//3 + 1, d.year,
+        int(d.strftime("%W")),
+        1 if d.weekday()>=5 else 0,
+        0
+    ))
+    d += timedelta(days=1)
+    sk += 1
+
+DimDate = spark.createDataFrame(calendar_rows,
+    "dim_date_sk int, full_date date, day int, month int, quarter int, year int, week int, is_weekend int, is_holiday int"
+)
+
+DimDate.write.mode("overwrite").parquet(f"{GOLD}/dim_date/")
+print("✔ DimDate ready")
+
+# =====================================================================
+# 2. DIM BRANCH
+# =====================================================================
+print("Building DimBranch...")
+
+DimBranch = (
+    customers.select("branch_id","branch_name","city","region","country")
+    .dropDuplicates()
+    .withColumn("dim_branch_sk", monotonically_increasing_id())
+)
+
+DimBranch.write.mode("overwrite").parquet(f"{GOLD}/dim_branch/")
+print("✔ DimBranch ready")
+
+# =====================================================================
+# 3. DIM INSTRUMENT
+# =====================================================================
+print("Building DimInstrument...")
+
+DimInstrument = (
+    trades.select("ticker","instrument_type","exchange")
+    .dropDuplicates()
+    .withColumn("dim_instrument_sk", monotonically_increasing_id())
+)
+
+DimInstrument.write.mode("overwrite").parquet(f"{GOLD}/dim_instrument/")
+print("✔ DimInstrument ready")
+
+# =====================================================================
+# 4. DIM PRODUCT
+# =====================================================================
+print("Building DimProduct...")
+
+DimProduct = spark.createDataFrame([
+    (1,"CASA","CASA"),
+    (2,"Savings","SAV"),
+    (3,"Current","CUR"),
+    (4,"Equity","EQ"),
+    (5,"Bond","BD"),
+    (6,"Derivative","DRV")
+], "dim_product_sk int, product_type string, product_code string")
+
+DimProduct.write.mode("overwrite").parquet(f"{GOLD}/dim_product/")
+print("✔ DimProduct ready")
+
+# =====================================================================
+# 5. DIM CUSTOMER (SCD2)
+# =====================================================================
+print("Building DimCustomer (SCD2)...")
+
+w = Window.partitionBy("customer_key").orderBy(col("updated_at").asc_nulls_last())
+
+DimCustomer = (
+    customers
+    .withColumn("eff_from", coalesce("updated_at", current_timestamp()))
+    .withColumn("eff_to", lead("updated_at").over(w))
+    .withColumn("is_current", when(col("eff_to").isNull(), lit(1)).otherwise(lit(0)))
+    .withColumn("dim_customer_sk", monotonically_increasing_id())
+)
+
+DimCustomer.write.mode("overwrite").parquet(f"{GOLD}/dim_customer/")
+print("✔ DimCustomer ready")
+
+# =====================================================================
+# 6. DIM ACCOUNT
+# =====================================================================
+print("Building DimAccount...")
+
+DimAccount = (
+    accounts
+    .withColumn("balance_band",
+        when(col("balance") < 1000, "<1k")
+        .when(col("balance") < 10000, "1k-10k")
+        .when(col("balance") < 100000, "10k-100k")
+        .otherwise("100k+")
+    )
+    .withColumn("dim_account_sk", monotonically_increasing_id())
+)
+
+DimAccount.write.mode("overwrite").parquet(f"{GOLD}/dim_account/")
+print("✔ DimAccount ready")
+
+# =====================================================================
+# 7. FACT RETAIL TRANSACTIONS
+# =====================================================================
+print("Building FactRetailTransactions...")
+
+# Step 1: Join trx → customers to get branch_id
+trx_w_branch = trx.alias("t") \
+    .join(customers.select("customer_key","branch_id"), "customer_key", "left")
+
+# Step 2: Join branch_id → DimBranch
+trx_w_dimbranch = trx_w_branch.join(DimBranch, "branch_id", "left")
+
+# Step 3: Join trx → DimCustomer
+trx_final = trx_w_dimbranch.join(
+    DimCustomer.select("customer_key","dim_customer_sk"),
+    "customer_key",
+    "left"
+).withColumn("dim_date_sk", col("txn_date"))
+
+# Step 4: Final selection (ONLY fields present in Silver)
+FactRetail = trx_final.select(
+    "customer_key",
+    "dim_customer_sk",
+    "dim_branch_sk",
+    col("t.account_ref").alias("account_ref"),
+    col("t.txn_id").alias("txn_id"),
+    col("t.amount").alias("amount"),
+    col("t.amount_usd").alias("amount_usd"),
+    col("t.channel").alias("channel"),
+    col("t.status").alias("status"),
+    col("t.txn_type").alias("txn_type"),
+    col("t.processing_time_sec").alias("processing_time_sec"),
+    col("t.txn_timestamp").alias("txn_timestamp"),
+    "dim_date_sk"
+)
+
+FactRetail.write.mode("overwrite").parquet(f"{GOLD}/fact_retail_transactions/")
+print("✔ FactRetail ready")
+
+# =====================================================================
+# 8. FACT INVESTMENT TRADES
+# =====================================================================
+print("Building FactInvestmentTrades...")
+
+FactTrades = (
+    trades.alias("tr")
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .join(DimInstrument, "ticker", "left")
+    .withColumn("dim_date_sk", to_date("trade_timestamp"))
+    .select(
+        "customer_key",
+        "dim_customer_sk",
+        "dim_instrument_sk",
+        "trade_id",
+        "quantity",
+        "price",
+        "trade_value",
+        "realized_pnl",
+        "unrealized_pnl",
+        "total_pnl",
+        "commission",
+        "trade_side",
+        "status",
+        col("trade_timestamp").alias("trade_timestamp"),
+        "dim_date_sk"
+    )
+)
+
+FactTrades.write.mode("overwrite").parquet(f"{GOLD}/fact_investment_trades/")
+print("✔ FactInvestmentTrades ready")
+
+# =====================================================================
+# 9. FACT PORTFOLIO HOLDINGS
+# =====================================================================
+print("Building FactPortfolioHoldings...")
+
+latest_price = (
+    mp.groupBy("ticker")
+    .agg(max("price_date").alias("latest_date"))
+    .join(mp, (mp.ticker == col("ticker")) & (mp.price_date == col("latest_date")))
+    .select(mp["ticker"], mp["close_price"])
+)
+
+buy_trades = (
+    trades.filter(col("trade_side")=="BUY")
+    .groupBy("customer_key","ticker")
+    .agg(
+        sum("quantity").alias("units_held"),
+        sum(col("quantity") * col("price")).alias("cost_basis_total")
+    )
+)
+
+holdings = (
+    buy_trades
+    .join(latest_price, "ticker", "left")
+    .withColumn("market_value_usd", col("units_held") * col("close_price"))
+    .join(DimInstrument, "ticker", "left")
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .withColumn("dim_date_sk", lit(None).cast("int"))
+    .select(
+        "customer_key",
+        "dim_customer_sk",
+        "dim_instrument_sk",
+        "dim_date_sk",
+        "units_held",
+        "market_value_usd",
+        "cost_basis_total"
+    )
+)
+
+holdings.write.mode("overwrite").parquet(f"{GOLD}/fact_portfolio_holdings/")
+print("✔ FactPortfolioHoldings ready")
+
+# =====================================================================
+# 10. FACT DAILY PNL
+# =====================================================================
+print("Building FactDailyPnL...")
+
+daily = (
+    trades
+    .withColumn("trade_date", to_date("trade_timestamp"))
+    .groupBy("customer_key","trade_date")
+    .agg(
+        sum("realized_pnl").alias("daily_realized_pnl"),
+        sum("unrealized_pnl").alias("daily_unrealized_pnl")
+    )
+)
+
+w_daily = (
+    Window.partitionBy("customer_key")
+    .orderBy("trade_date")
+    .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+)
+
+daily = (
+    daily
+    .withColumn("cumulative_pnl",
+        sum(col("daily_realized_pnl") + col("daily_unrealized_pnl")).over(w_daily)
+    )
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .withColumn("dim_date_sk", col("trade_date"))
+    .select(
+        "customer_key",
+        "dim_customer_sk",
+        "dim_date_sk",
+        "daily_realized_pnl",
+        "daily_unrealized_pnl",
+        "cumulative_pnl"
+    )
+)
+
+daily.write.mode("overwrite").parquet(f"{GOLD}/fact_daily_pnl/")
+print("✔ FactDailyPnL ready")
+
+print("================================================")
+print("   GOLD LAYER BUILD SUCCESSFULLY COMPLETED      ")
+print("================================================")
