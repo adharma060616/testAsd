@@ -1,90 +1,50 @@
-PySparkTypeError                          Traceback (most recent call last)
-Cell In[7], line 170
-    167     mark_processed(BATCH_ID, table, valid.count())
-    169 # Example calls (set your landing paths)
---> 170 ingest_table('customers', 'csv', customer_schema,  f"{BRONZE}/landing/customers/*.csv")
-    171 ingest_table('accounts', 'parquet', accounts_schema, f"{BRONZE}/landing/accounts/*.parquet")
-    172 ingest_table('transactions', 'parquet', transactions_schema, f"{BRONZE}/landing/transactions/*.parquet")
+from pyspark.sql import functions as F
 
-Cell In[7], line 167, in ingest_table(table, fmt, schema, src_path)
-    163 if invalid.count() > 0:
-    164     (invalid.withColumn('rejection_reason', lit('Schema/Rule violation'))
-    165            .write.mode('append').parquet(f"{QUAR}/{table}/"))
---> 167 mark_processed(BATCH_ID, table, valid.count())
+def mark_processed(batch_id: str, table_name: str, row_count: int):
+    (spark.createDataFrame([(batch_id, table_name, int(row_count))],
+                           "batch_id string, table_name string, row_count long")
+          .withColumn("processed_at", F.current_timestamp())
+          .write.mode("append")
+          .parquet(CONTROL_PATH))
 
-Cell In[7], line 30, in mark_processed(batch_id, table_name, count)
-     29 def mark_processed(batch_id: str, table_name: str, count: int):
----> 30     spark.createDataFrame([(batch_id, table_name, count, current_timestamp())],
-     31                           "batch_id string, table string, row_count long, processed_at timestamp")          .write.mode("append").parquet(CONTROL_PATH)
+def ingest_table(table: str, fmt: str, schema, src_path: str):
+    if already_processed(BATCH_ID):
+        print(f"Batch {BATCH_ID} already processed. Skipping.")
+        return
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1443, in SparkSession.createDataFrame(self, data, schema, samplingRatio, verifySchema)
-   1438 if has_pandas and isinstance(data, pd.DataFrame):
-   1439     # Create a DataFrame from pandas DataFrame.
-   1440     return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
-   1441         data, schema, samplingRatio, verifySchema
-   1442     )
--> 1443 return self._create_dataframe(
-   1444     data, schema, samplingRatio, verifySchema  # type: ignore[arg-type]
-   1445 )
+    reader = spark.read.format(fmt)
+    if fmt == "csv":
+        reader = reader.option("header", True)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1485, in SparkSession._create_dataframe(self, data, schema, samplingRatio, verifySchema)
-   1483     rdd, struct = self._createFromRDD(data.map(prepare), schema, samplingRatio)
-   1484 else:
--> 1485     rdd, struct = self._createFromLocal(map(prepare, data), schema)
-   1486 assert self._jvm is not None
-   1487 jrdd = self._jvm.SerDeUtil.toJavaArray(rdd._to_java_object_rdd())
+    df = (reader.schema(schema).load(src_path)
+          .withColumn("ingestion_timestamp", F.current_timestamp())
+          .withColumn("source_file_path", F.input_file_name())
+          .withColumn("batch_id", F.lit(BATCH_ID))
+          .withColumn("source_system", F.lit(SOURCE_SYSTEM)))
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1090, in SparkSession._createFromLocal(self, data, schema)
-   1088 # make sure data could consumed multiple times
-   1089 if not isinstance(data, list):
--> 1090     data = list(data)
-   1092 if schema is None or isinstance(schema, (list, tuple)):
-   1093     struct = self._inferSchemaFromList(data, names=schema)
+    # Simple validity rules per table
+    if table == "customers":
+        valid = df.filter(F.col("customer_key").isNotNull())
+        invalid = df.exceptAll(valid)
+    elif table == "transactions":
+        valid = df.filter(F.col("txn_id").isNotNull() & F.col("txn_timestamp").isNotNull())
+        invalid = df.exceptAll(valid)
+    else:
+        valid = df
+        invalid = spark.createDataFrame([], df.schema)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1459, in SparkSession._create_dataframe.<locals>.prepare(obj)
-   1457 @no_type_check
-   1458 def prepare(obj):
--> 1459     verify_func(obj)
-   1460     return obj
+    # ACTION 1: count once
+    valid_cnt = valid.count()
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:2201, in _make_type_verifier.<locals>.verify(obj)
-   2199 def verify(obj: Any) -> None:
-   2200     if not verify_nullability(obj):
--> 2201         verify_value(obj)
+    # ACTION 2: write valid
+    (valid.write.mode("append")
+          .parquet(f"{BRONZE}/{table}/"))
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:2174, in _make_type_verifier.<locals>.verify_struct(obj)
-   2164         raise PySparkValueError(
-   2165             error_class="LENGTH_SHOULD_BE_THE_SAME",
-   2166             message_parameters={
-   (...)
-   2171             },
-   2172         )
-   2173     for v, (_, verifier) in zip(obj, verifiers):
--> 2174         verifier(v)
-   2175 elif hasattr(obj, "__dict__"):
-   2176     d = obj.__dict__
+    # ACTION 3: write invalid (if any)
+    if invalid.count() > 0:
+        (invalid.withColumn("rejection_reason", F.lit("Schema/Rule violation"))
+               .write.mode("append")
+               .parquet(f"{QUAR}/{table}/"))
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:2201, in _make_type_verifier.<locals>.verify(obj)
-   2199 def verify(obj: Any) -> None:
-   2200     if not verify_nullability(obj):
--> 2201         verify_value(obj)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:2195, in _make_type_verifier.<locals>.verify_default(obj)
-   2193 def verify_default(obj: Any) -> None:
-   2194     assert_acceptable_types(obj)
--> 2195     verify_acceptable_types(obj)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:2020, in _make_type_verifier.<locals>.verify_acceptable_types(obj)
-   2017 def verify_acceptable_types(obj: Any) -> None:
-   2018     # subclass of them can not be fromInternal in JVM
-   2019     if type(obj) not in _acceptable_types[_type]:
--> 2020         raise PySparkTypeError(
-   2021             error_class="CANNOT_ACCEPT_OBJECT_IN_TYPE",
-   2022             message_parameters={
-   2023                 "data_type": str(dataType),
-   2024                 "obj_name": str(obj),
-   2025                 "obj_type": type(obj).__name__,
-   2026             },
-   2027         )
-
-PySparkTypeError: [CANNOT_ACCEPT_OBJECT_IN_TYPE] `TimestampType()` can not accept object `Column<'current_timestamp()'>` in type `Column`.
+    # ACTION 4: log control (uses withColumn current_timestamp())
+    mark_processed(BATCH_ID, table, valid_cnt)
