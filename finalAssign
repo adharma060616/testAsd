@@ -1,65 +1,288 @@
-Cell In[11], line 67
-     62 DimAccount.write.mode('overwrite').parquet(f"{GOLD}/dim_account/")
-     64 # ===== FactRetailTransactions
-     65 FactRetail = (trx
-     66     .join(DimCustomer.select('customer_key','dim_customer_sk'), 'customer_key','left')
----> 67     .join(DimBranch.select('branch_id','dim_branch_sk'), on=trx['customer_key']==customers['customer_key'], how='left')
-     68 )
-     69 # Simplify joins by recomputing branch via customers
-     70 fact_retail = (trx.alias('t')
-     71     .join(customers.select('customer_key','branch_id'),'customer_key','left')
-     72     .join(DimBranch,'branch_id','left')
-   (...)
-     89     )
-     90 )
+# ================================================================
+# GOLD LAYER – STAR SCHEMA BUILDER
+# Author: Your Name
+# ================================================================
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
-   2491         on = self._jseq([])
-   2492     assert isinstance(how, str), "how should be a string"
--> 2493     jdf = self._jdf.join(other._jdf, on, how)
-   2494 return DataFrame(jdf, self.sparkSession)
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.window import Window
 
-File ~/cluster-env/env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# ---------------- CONFIG ----------------
+ADLS_ACCOUNT = "stcapstone"      # <-- CHANGE THIS TO YOUR ACCOUNT NAME
+SILVER = f"abfss://silver@{ADLS_ACCOUNT}.dfs.core.windows.net"
+GOLD   = f"abfss://gold@{ADLS_ACCOUNT}.dfs.core.windows.net"
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:179, in capture_sql_exception.<locals>.deco(*a, **kw)
-    177 def deco(*a: Any, **kw: Any) -> Any:
-    178     try:
---> 179         return f(*a, **kw)
-    180     except Py4JJavaError as e:
-    181         converted = convert_exception(e.java_exception)
+spark = SparkSession.builder.getOrCreate()
 
-File ~/cluster-env/env/lib/python3.11/site-packages/py4j/protocol.py:326, in get_return_value(answer, gateway_client, target_id, name)
-    324 value = OUTPUT_CONVERTER[type](answer[2:], gateway_client)
-    325 if answer[1] == REFERENCE_TYPE:
---> 326     raise Py4JJavaError(
-    327         "An error occurred while calling {0}{1}{2}.\n".
-    328         format(target_id, ".", name), value)
-    329 else:
-    330     raise Py4JError(
-    331         "An error occurred while calling {0}{1}{2}. Trace:\n{3}\n".
-    332         format(target_id, ".", name, value))
+print("Loading Silver Layer input tables...")
 
-Py4JJavaError: An error occurred while calling o4665.join.
-: java.lang.ClassCastException: class org.apache.spark.sql.catalyst.plans.logical.Project cannot be cast to class org.apache.spark.sql.catalyst.plans.logical.Join (org.apache.spark.sql.catalyst.plans.logical.Project and org.apache.spark.sql.catalyst.plans.logical.Join are in unnamed module of loader 'app')
-	at org.apache.spark.sql.Dataset.resolveSelfJoinCondition(Dataset.scala:1146)
-	at org.apache.spark.sql.Dataset.join(Dataset.scala:1194)
-	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
-	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
-	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
-	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
-	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
-	at py4j.Gateway.invoke(Gateway.java:282)
-	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
-	at py4j.commands.CallCommand.execute(CallCommand.java:79)
-	at py4j.GatewayConnection.run(GatewayConnection.java:238)
-	at java.base/java.lang.Thread.run(Thread.java:840)
+# ---------------- LOAD SILVER ----------------
+customers   = spark.read.parquet(f"{SILVER}/customers/")
+accounts    = spark.read.parquet(f"{SILVER}/accounts/")
+trx         = spark.read.parquet(f"{SILVER}/transactions/")
+trades      = spark.read.parquet(f"{SILVER}/trades/")
+mp          = spark.read.parquet(f"{SILVER}/market_prices/")
+
+# ================================================================
+# 1. DIM DATE (10‑year calendar)
+# ================================================================
+
+from datetime import date, timedelta
+print("Building DimDate...")
+
+start = date(2018, 1, 1)
+end   = date(2028, 12, 31)
+
+rows = []
+d = start
+sk = 1
+while d <= end:
+    rows.append((
+        sk, d, d.day, d.month,
+        (d.month - 1)//3 + 1,
+        d.year,
+        int(d.strftime("%W")),
+        1 if d.weekday() >= 5 else 0,
+        0
+    ))
+    d += timedelta(days=1)
+    sk += 1
+
+DimDate = spark.createDataFrame(rows,
+  "dim_date_sk int, full_date date, day int, month int, quarter int, year int, week int, is_weekend int, is_holiday int"
+)
+
+DimDate.write.mode("overwrite").parquet(f"{GOLD}/dim_date/")
+print("✔ DimDate written to GOLD")
+
+# ================================================================
+# 2. DIM BRANCH (Derived from customers)
+# ================================================================
+print("Building DimBranch...")
+
+DimBranch = (
+    customers.select("branch_id", "branch_name", "city", "region", "country")
+    .dropDuplicates()
+    .withColumn("dim_branch_sk", monotonically_increasing_id())
+    .select("dim_branch_sk", "branch_id", "branch_name", "city", "region", "country")
+)
+
+DimBranch.write.mode("overwrite").parquet(f"{GOLD}/dim_branch/")
+print("✔ DimBranch written to GOLD")
+
+# ================================================================
+# 3. DIM INSTRUMENT (Derived from trades)
+# ================================================================
+print("Building DimInstrument...")
+
+DimInstrument = (
+    trades.select("ticker", "instrument_type", "exchange")
+    .dropDuplicates()
+    .withColumn("dim_instrument_sk", monotonically_increasing_id())
+    .select("dim_instrument_sk", "ticker", "instrument_type", "exchange")
+)
+
+DimInstrument.write.mode("overwrite").parquet(f"{GOLD}/dim_instrument/")
+print("✔ DimInstrument written to GOLD")
+
+# ================================================================
+# 4. DIM PRODUCT (Static)
+# ================================================================
+print("Building DimProduct...")
+
+DimProduct = spark.createDataFrame([
+    (1, 'CASA', 'CASA'),
+    (2, 'Savings', 'SAV'),
+    (3, 'Current', 'CUR'),
+    (4, 'Equity', 'EQ'),
+    (5, 'Bond', 'BD'),
+    (6, 'Derivative', 'DRV')
+], "dim_product_sk int, product_type string, product_code string")
+
+DimProduct.write.mode("overwrite").parquet(f"{GOLD}/dim_product/")
+print("✔ DimProduct written to GOLD")
+
+# ================================================================
+# 5. DIM CUSTOMER (SCD‑TYPE 2)
+# ================================================================
+print("Building DimCustomer (SCD‑2)...")
+
+w = Window.partitionBy("customer_key").orderBy(col("updated_at").asc_nulls_last())
+
+DimCustomer = (
+    customers
+    .withColumn("eff_from", coalesce(col("updated_at"), current_timestamp()))
+    .withColumn("eff_to", lead("updated_at").over(w))
+    .withColumn("is_current", when(col("eff_to").isNull(), lit(1)).otherwise(lit(0)))
+    .withColumn("dim_customer_sk", monotonically_increasing_id())
+)
+
+DimCustomer.write.mode("overwrite").parquet(f"{GOLD}/dim_customer/")
+print("✔ DimCustomer written to GOLD")
+
+# ================================================================
+# 6. DIM ACCOUNT
+# ================================================================
+print("Building DimAccount...")
+
+DimAccount = (
+    accounts
+    .withColumn(
+        "balance_band",
+        when(col("balance") < 1000, "<1k")
+        .when(col("balance") < 10000, "1k-10k")
+        .when(col("balance") < 100000, "10k-100k")
+        .otherwise("100k+")
+    )
+    .withColumn("dim_account_sk", monotonically_increasing_id())
+    .select("dim_account_sk", "account_id", "customer_key", 
+            "account_type", "balance_band", "currency",
+            "account_status", "open_date", "interest_rate")
+)
+
+DimAccount.write.mode("overwrite").parquet(f"{GOLD}/dim_account/")
+print("✔ DimAccount written to GOLD")
+
+# ================================================================
+# 7. FACT RETAIL TRANSACTIONS
+# ================================================================
+print("Building FactRetailTransactions...")
+
+# STEP 1 — join trx → customers (gives branch_id)
+trx_w_branch = trx.alias("t") \
+    .join(customers.select("customer_key", "branch_id"), "customer_key", "left")
+
+# STEP 2 — join branch_id → DimBranch
+trx_w_dimbranch = trx_w_branch.join(DimBranch, "branch_id", "left")
+
+# STEP 3 — join customer_key → DimCustomer
+trx_final = trx_w_dimbranch.join(
+    DimCustomer.select("customer_key", "dim_customer_sk"), 
+    "customer_key",
+    "left"
+).withColumn("dim_date_sk", col("txn_date"))
+
+FactRetail = trx_final.select(
+    "customer_key",
+    "dim_customer_sk",
+    "dim_branch_sk",
+    col("t.account_ref").alias("account_ref"),
+    col("t.txn_id").alias("txn_id"),
+    col("t.amount").alias("amount"),
+    col("t.amount_usd").alias("amount_usd"),
+    col("t.channel").alias("channel"),
+    col("t.status").alias("status"),
+    col("t.txn_type").alias("txn_type"),
+    col("t.processing_time_sec").alias("processing_time_sec"),
+    col("t.sla_breached").alias("sla_breached"),
+    col("t.error_flag").alias("error_flag"),
+    col("t.rejection_reason").alias("rejection_reason"),
+    col("t.txn_timestamp").alias("txn_timestamp"),
+    "dim_date_sk"
+)
+
+FactRetail.write.mode("overwrite").parquet(f"{GOLD}/fact_retail_transactions/")
+print("✔ FactRetailTransactions written to GOLD")
+
+# ================================================================
+# 8. FACT INVESTMENT TRADES
+# ================================================================
+print("Building FactInvestmentTrades...")
+
+FactTrades = (
+    trades.alias("tr")
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .join(DimInstrument, "ticker", "left")
+    .withColumn("dim_date_sk", to_date(col("trade_timestamp")))
+    .select(
+        "customer_key", "dim_customer_sk", "dim_instrument_sk",
+        "trade_id", "quantity", "price", "trade_value",
+        "realized_pnl", "unrealized_pnl", "total_pnl",
+        "commission", "trade_side", "status",
+        col("trade_timestamp").alias("trade_timestamp"),
+        "dim_date_sk"
+    )
+)
+
+FactTrades.write.mode("overwrite").parquet(f"{GOLD}/fact_investment_trades/")
+print("✔ FactInvestmentTrades written to GOLD")
+
+# ================================================================
+# 9. FACT PORTFOLIO HOLDINGS
+# ================================================================
+print("Building FactPortfolioHoldings...")
+
+# Latest market price per ticker
+latest_price = (
+    mp.groupBy("ticker")
+    .agg(max("price_date").alias("latest_date"))
+    .join(mp, (mp.ticker == col("ticker")) & (mp.price_date == col("latest_date")))
+    .select(mp["ticker"], mp["close_price"])
+)
+
+# BUY positions aggregated
+buy_trades = (
+    trades.filter(col("trade_side") == "BUY")
+    .groupBy("customer_key", "ticker")
+    .agg(
+        sum("quantity").alias("units_held"),
+        sum(col("quantity") * col("price")).alias("cost_basis_total")
+    )
+)
+
+holdings = (
+    buy_trades
+    .join(latest_price, "ticker", "left")
+    .withColumn("market_value_usd", col("units_held") * col("close_price"))
+    .join(DimInstrument, "ticker", "left")
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .withColumn("dim_date_sk", lit(None).cast("int"))
+    .select(
+        "customer_key", "dim_customer_sk", "dim_instrument_sk",
+        "dim_date_sk", "units_held", "market_value_usd",
+        "cost_basis_total"
+    )
+)
+
+holdings.write.mode("overwrite").parquet(f"{GOLD}/fact_portfolio_holdings/")
+print("✔ FactPortfolioHoldings written to GOLD")
+
+# ================================================================
+# 10. FACT DAILY PNL
+# ================================================================
+print("Building FactDailyPnL...")
+
+daily = (
+    trades
+    .withColumn("trade_date", to_date("trade_timestamp"))
+    .groupBy("customer_key", "trade_date")
+    .agg(
+        sum("realized_pnl").alias("daily_realized_pnl"),
+        sum("unrealized_pnl").alias("daily_unrealized_pnl")
+    )
+)
+
+w_daily = (
+    Window.partitionBy("customer_key")
+    .orderBy("trade_date")
+    .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+)
+
+daily = (
+    daily
+    .withColumn("cumulative_pnl",
+                sum(col("daily_realized_pnl") + col("daily_unrealized_pnl")).over(w_daily))
+    .join(DimCustomer.select("customer_key","dim_customer_sk"), "customer_key", "left")
+    .withColumn("dim_date_sk", col("trade_date"))
+    .select(
+        "customer_key", "dim_customer_sk", "dim_date_sk",
+        "daily_realized_pnl", "daily_unrealized_pnl", "cumulative_pnl"
+    )
+)
+
+daily.write.mode("overwrite").parquet(f"{GOLD}/fact_daily_pnl/")
+print("✔ FactDailyPnL written to GOLD")
+
+print("========================================================")
+print(" GOLD LAYER BUILD COMPLETE ")
+print("========================================================")
